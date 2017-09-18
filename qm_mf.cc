@@ -12,10 +12,12 @@
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/index_set.h>
+#include <deal.II/base/timer.h>
 #include <deal.II/distributed/tria.h>
 #include <deal.II/dofs/dof_renumbering.h>
 #include <deal.II/dofs/dof_tools.h>
 #include <deal.II/fe/fe_q.h>
+#include <deal.II/fe/mapping_q.h>
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/fe_tools.h>
 #include <deal.II/grid/grid_generator.h>
@@ -23,7 +25,6 @@
 #include <deal.II/lac/linear_operator.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/numerics/vector_tools.h>
-
 
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/grid/grid_in.h>
@@ -33,41 +34,132 @@
 #include <deal.II/lac/parpack_solver.h>
 
 #include <iostream>
-
-
-const unsigned int dim = 2;
+#include <fstream>
 
 using namespace dealii;
 
-const double eps = 1e-10;
-
-const unsigned int fe_degree = 1;
-
-void test ()
+struct EigenvalueParameters
 {
-  const unsigned int global_mesh_refinement_steps = 5;
-  const unsigned int number_of_eigenvalues        = 5;
 
-  MPI_Comm mpi_communicator = MPI_COMM_WORLD;
-  const unsigned int n_mpi_processes = Utilities::MPI::n_mpi_processes(mpi_communicator);
-  const unsigned int this_mpi_process = Utilities::MPI::this_mpi_process(mpi_communicator);
+  EigenvalueParameters()
+  :
+  global_mesh_refinement_steps(5),
+  number_of_eigenvalues(5)
+  {}
 
-  ConditionalOStream pcout(std::cout, this_mpi_process==0);
+  unsigned int global_mesh_refinement_steps;
 
-  parallel::distributed::Triangulation<dim> triangulation (mpi_communicator);
+  unsigned int number_of_eigenvalues;
+
+};
+
+template <int dim, int fe_degree=1,int n_q_points=fe_degree+1, typename NumberType = double>
+class EigenvalueProblem
+{
+public:
+  ~EigenvalueProblem();
+  EigenvalueProblem(const EigenvalueParameters& parameters);
+  void run();
+
+private:
+  typedef LinearAlgebra::distributed::Vector<NumberType> VectorType;
+
+  void make_mesh();
+  void setup_system();
+  void solve();
+
+  const EigenvalueParameters &parameters;
+
+  MPI_Comm mpi_communicator;
+  const unsigned int n_mpi_processes;
+  const unsigned int this_mpi_process;
+  std::ofstream output_fstream;
+  ConditionalOStream   pcout;
+  ConditionalOStream   plog;
+  TimerOutput  computing_timer;
+
+  parallel::distributed::Triangulation<dim> triangulation;
+  DoFHandler<dim> dof_handler;
+  FE_Q<dim> fe;
+  MappingQ<dim>  mapping;
+  QGauss<1> quadrature_formula;
+
+  ConstraintMatrix constraints;
+  IndexSet locally_owned_dofs;
+  IndexSet locally_relevant_dofs;
+
+  std::vector<LinearAlgebra::distributed::Vector<NumberType>> eigenfunctions;
+  std::vector<NumberType> eigenvalues;
+
+  std::shared_ptr<MatrixFree<dim,NumberType>> fine_level_data;
+
+  MatrixFreeOperators::LaplaceOperator<dim,fe_degree,n_q_points,1,VectorType> hamiltonian_operator;
+  MatrixFreeOperators::MassOperator   <dim,fe_degree,n_q_points,1,VectorType> mass_operator;
+};
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::~EigenvalueProblem()
+{
+  dof_handler.clear ();
+
+  hamiltonian_operator.clear();
+  mass_operator.clear();
+}
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::EigenvalueProblem(const EigenvalueParameters& parameters)
+:
+parameters(parameters),
+mpi_communicator(MPI_COMM_WORLD),
+n_mpi_processes(Utilities::MPI::n_mpi_processes(mpi_communicator)),
+this_mpi_process(Utilities::MPI::this_mpi_process(mpi_communicator)),
+pcout(std::cout, this_mpi_process==0),
+plog(output_fstream, this_mpi_process==0),
+computing_timer(mpi_communicator,
+                pcout,
+                TimerOutput::summary,
+                TimerOutput::wall_times),
+triangulation(mpi_communicator,
+              // guarantee that the mesh also does not change by more than refinement level across vertices that might connect two cells:
+              Triangulation<dim>::limit_level_difference_at_vertices,
+              parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
+dof_handler(triangulation),
+fe(fe_degree),
+mapping(fe_degree+1),
+quadrature_formula(n_q_points),
+eigenfunctions(parameters.number_of_eigenvalues),
+eigenvalues(parameters.number_of_eigenvalues)
+{
+  if (this_mpi_process==0)
+    output_fstream.open("output",std::ios::out | std::ios::trunc);
+}
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::make_mesh()
+{
   GridGenerator::hyper_cube (triangulation, -1, 1);
-  triangulation.refine_global (global_mesh_refinement_steps);
+  triangulation.refine_global (parameters.global_mesh_refinement_steps);
+}
 
 
-  DoFHandler<dim> dof_handler(triangulation);
-  FE_Q<dim> fe(fe_degree);
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
+{
   dof_handler.distribute_dofs (fe);
-
 
   IndexSet locally_relevant_dofs;
   DoFTools::extract_locally_relevant_dofs (dof_handler,
                                            locally_relevant_dofs);
-  ConstraintMatrix constraints;
+
   constraints.reinit (locally_relevant_dofs);
   DoFTools::make_hanging_node_constraints  (dof_handler, constraints);
   VectorTools::interpolate_boundary_values (dof_handler,
@@ -76,113 +168,93 @@ void test ()
                                             constraints);
   constraints.close ();
 
-  std::shared_ptr<MatrixFree<dim,double> > mf_data(new MatrixFree<dim,double> ());
-  {
-    const QGauss<1> quad (fe_degree+1);
-    typename MatrixFree<dim,double>::AdditionalData data;
-    data.tasks_parallel_scheme =
-      MatrixFree<dim,double>::AdditionalData::partition_color;
-    data.mapping_update_flags = update_values | update_gradients | update_JxW_values;
-    mf_data->reinit (dof_handler, constraints, quad, data);
-  }
+  // matrix-free data
+  fine_level_data.reset();
+  fine_level_data = std::make_shared<MatrixFree<dim,NumberType>>();
+  typename MatrixFree<dim,NumberType>::AdditionalData data;
+  data.tasks_parallel_scheme = MatrixFree<dim,NumberType>::AdditionalData::partition_color;
+  data.mapping_update_flags = update_values | update_gradients | update_JxW_values;
+  fine_level_data->reinit (mapping, dof_handler, constraints, quadrature_formula, data);
 
+  // initialize matrix-free operators:
+  mass_operator.initialize(fine_level_data);
+  hamiltonian_operator.initialize(fine_level_data);
 
-  std::vector<LinearAlgebra::distributed::Vector<double> > eigenfunctions;
-  std::vector<double>                                      eigenvalues;
-  MatrixFreeOperators::MassOperator<dim,fe_degree, fe_degree+1, 1, LinearAlgebra::distributed::Vector<double> > mass;
-  MatrixFreeOperators::LaplaceOperator<dim,fe_degree, fe_degree+1, 1, LinearAlgebra::distributed::Vector<double> > laplace;
-  mass.initialize(mf_data);
-  laplace.initialize(mf_data);
-
-  eigenfunctions.resize (number_of_eigenvalues);
-  eigenvalues.resize (number_of_eigenvalues);
+  // initialize vectors:
   for (unsigned int i=0; i<eigenfunctions.size (); ++i)
-    mf_data->initialize_dof_vector (eigenfunctions[i]);
+    fine_level_data->initialize_dof_vector (eigenfunctions[i]);
 
-  // test PArpack with matrix-free
+
+}
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve()
+{
+  std::vector<std::complex<NumberType>> lambda(parameters.number_of_eigenvalues);
+
+  // set up iterative inverse
+  static ReductionControl inner_control_c(dof_handler.n_dofs(), 0.0, 1.e-13);
+
+  SolverCG<VectorType> solver_c(inner_control_c);
+  PreconditionIdentity preconditioner;
+  const auto shift_and_invert =
+    inverse_operator(linear_operator<VectorType>(hamiltonian_operator),
+                     solver_c,
+                     preconditioner);
+
+  const unsigned int num_arnoldi_vectors = 2*eigenvalues.size() + 2;
+  typename PArpackSolver<VectorType>::AdditionalData
+  additional_data(num_arnoldi_vectors,
+                  PArpackSolver<VectorType>::largest_magnitude,
+                  true);
+
+  SolverControl solver_control(dof_handler.n_dofs(), 1e-9, /*log_history*/ false, /*log_results*/ false);
+  PArpackSolver<VectorType> eigensolver(solver_control, mpi_communicator, additional_data);
+
+  eigensolver.reinit(eigenfunctions[0]);
+  // make sure initial vector is orthogonal to the space due to constraints
   {
-    std::vector<std::complex<double> > lambda(number_of_eigenvalues);
-
-    // set up iterative inverse
-    static ReductionControl inner_control_c(dof_handler.n_dofs(), 0.0, 1.e-13);
-
-    typedef LinearAlgebra::distributed::Vector<double> VectorType;
-    SolverCG<VectorType> solver_c(inner_control_c);
-    PreconditionIdentity preconditioner;
-    const auto shift_and_invert =
-      inverse_operator(linear_operator<VectorType>(laplace),
-                       solver_c,
-                       preconditioner);
-
-    const unsigned int num_arnoldi_vectors = 2*eigenvalues.size() + 2;
-    PArpackSolver<LinearAlgebra::distributed::Vector<double> >::AdditionalData
-    additional_data(num_arnoldi_vectors,
-                    PArpackSolver<LinearAlgebra::distributed::Vector<double> >::largest_magnitude,
-                    true);
-
-    SolverControl solver_control(
-      dof_handler.n_dofs(), 1e-9, /*log_history*/ false, /*log_results*/ false);
-
-    PArpackSolver<LinearAlgebra::distributed::Vector<double> > eigensolver(
-      solver_control, mpi_communicator, additional_data);
-
-    eigensolver.reinit(eigenfunctions[0]);
-    // make sure initial vector is orthogonal to the space due to constraints
-    {
-      LinearAlgebra::distributed::Vector<double> init_vector;
-      mf_data->initialize_dof_vector(init_vector);
-      init_vector = 1.;
-      constraints.set_zero(init_vector);
-      eigensolver.set_initial_vector(init_vector);
-    }
-    // avoid output of iterative solver:
-    const unsigned int previous_depth = deallog.depth_file(0);
-    eigensolver.solve (laplace,
-                       mass,
-                       shift_and_invert,
-                       lambda,
-                       eigenfunctions,
-                       eigenvalues.size());
-    deallog.depth_file(previous_depth);
-
-    for (unsigned int i = 0; i < lambda.size(); i++)
-      eigenvalues[i] = lambda[i].real();
-
-    for (unsigned int i=0; i < eigenvalues.size(); i++)
-      pcout << eigenvalues[i] << std::endl;
-
-    // make sure that we have eigenvectors and they are mass-orthonormal:
-    // a) (A*x_i-\lambda*B*x_i).L2() == 0
-    // b) x_j*B*x_i=\delta_{ij}
-    {
-      const double precision = 1e-7;
-      LinearAlgebra::distributed::Vector<double> Ax(eigenfunctions[0]), Bx(eigenfunctions[0]);
-      for (unsigned int i=0; i < eigenfunctions.size(); ++i)
-        {
-          mass.vmult(Bx,eigenfunctions[i]);
-
-          for (unsigned int j=0; j < eigenfunctions.size(); j++)
-            Assert( std::abs( eigenfunctions[j] * Bx - (i==j))< precision,
-                    ExcMessage("Eigenvectors " +
-                               Utilities::int_to_string(i) +
-                               " and " +
-                               Utilities::int_to_string(j) +
-                               " are not orthonormal!"));
-
-          laplace.vmult(Ax,eigenfunctions[i]);
-          Ax.add(-1.0*eigenvalues[i],Bx);
-          Assert (Ax.l2_norm() < precision,
-                  ExcMessage("Returned vector " +
-                             Utilities::int_to_string(i) +
-                             " is not an eigenvector!"));
-        }
-    }
+    VectorType init_vector;
+    fine_level_data->initialize_dof_vector(init_vector);
+    init_vector = 1.;
+    constraints.set_zero(init_vector);
+    eigensolver.set_initial_vector(init_vector);
   }
 
+  // avoid output of iterative solver:
+  const unsigned int previous_depth = deallog.depth_file(0);
+  eigensolver.solve (hamiltonian_operator,
+                     mass_operator,
+                     shift_and_invert,
+                     lambda,
+                     eigenfunctions,
+                     eigenvalues.size());
+  deallog.depth_file(previous_depth);
 
-  dof_handler.clear ();
-  deallog << "Ok"<<std::endl;
+  for (unsigned int i = 0; i < lambda.size(); i++)
+    eigenvalues[i] = lambda[i].real();
+
+  for (unsigned int i=0; i < eigenvalues.size(); i++)
+    {
+      pcout << eigenvalues[i] << std::endl;
+      plog  << eigenvalues[i] << std::endl;
+    }
 }
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
+{
+  make_mesh();
+  setup_system();
+  solve();
+}
+
 
 
 int main (int argc,char **argv)
@@ -192,7 +264,9 @@ int main (int argc,char **argv)
     {
       Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, numbers::invalid_unsigned_int);
       {
-        test ();
+        EigenvalueParameters parameters;
+        EigenvalueProblem<2> eigen_problem(parameters);
+        eigen_problem.run();
       }
 
     }
