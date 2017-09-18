@@ -38,6 +38,10 @@
 #include <fstream>
 
 using namespace dealii;
+using namespace MatrixFreeOperators;
+
+#include "hamiltonian.h"
+
 
 struct EigenvalueParameters
 {
@@ -94,8 +98,8 @@ private:
 
   std::shared_ptr<MatrixFree<dim,NumberType>> fine_level_data;
 
-  MatrixFreeOperators::LaplaceOperator<dim,fe_degree,n_q_points,1,VectorType> hamiltonian_operator;
-  MatrixFreeOperators::MassOperator   <dim,fe_degree,n_q_points,1,VectorType> mass_operator;
+  HamiltonianOperator<dim,fe_degree,n_q_points,1,VectorType> hamiltonian_operator;
+  MassOperator       <dim,fe_degree,n_q_points,1,VectorType> mass_operator;
 };
 
 
