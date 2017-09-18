@@ -62,12 +62,21 @@ struct EigenvalueParameters
     parameter_handler.declare_entry ("Potential", "0",
                                      Patterns::Anything(),
                                      "A functional description of the potential.");
+    parameter_handler.declare_entry ("Dimension", "2",
+                                     Patterns::Selection("2|3"),
+                                     "Space dimension of the problem.");
+    parameter_handler.declare_entry ("Size", "2.",
+                                     Patterns::Double(),
+                                     "Size of the computational domain");
+
 
     parameter_handler.parse_input (parameter_file);
 
     global_mesh_refinement_steps = parameter_handler.get_integer ("Global mesh refinement steps");
     number_of_eigenvalues = parameter_handler.get_integer ("Number of eigenvalues/eigenfunctions");
     potential = parameter_handler.get ("Potential");
+    dim = parameter_handler.get_integer ("Dimension");
+    size = parameter_handler.get_double ("Size");
   }
 
   unsigned int global_mesh_refinement_steps;
@@ -75,6 +84,10 @@ struct EigenvalueParameters
   unsigned int number_of_eigenvalues;
 
   std::string potential;
+
+  unsigned int dim;
+
+  double size;
 
 };
 
@@ -122,6 +135,8 @@ private:
   MassOperator       <dim,fe_degree,n_q_points,1,VectorType> mass_operator;
 
   FunctionParser<dim> potential;
+
+  std::shared_ptr<Table<2, VectorizedArray<NumberType>>> coefficient;
 };
 
 
@@ -193,7 +208,7 @@ void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::make_mesh()
 {
   TimerOutput::Scope t (computing_timer, "Make mesh");
-  GridGenerator::hyper_cube (triangulation, -1, 1);
+  GridGenerator::hyper_cube (triangulation, -parameters.size/2., parameters.size/2.);
   triangulation.refine_global (parameters.global_mesh_refinement_steps);
 }
 
@@ -223,7 +238,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
   fine_level_data = std::make_shared<MatrixFree<dim,NumberType>>();
   typename MatrixFree<dim,NumberType>::AdditionalData data;
   data.tasks_parallel_scheme = MatrixFree<dim,NumberType>::AdditionalData::partition_color;
-  data.mapping_update_flags = update_values | update_gradients | update_JxW_values;
+  data.mapping_update_flags = update_values | update_gradients | update_JxW_values | update_quadrature_points;
   fine_level_data->reinit (mapping, dof_handler, constraints, quadrature_formula, data);
 
   // initialize matrix-free operators:
@@ -233,6 +248,34 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
   // initialize vectors:
   for (unsigned int i=0; i<eigenfunctions.size (); ++i)
     fine_level_data->initialize_dof_vector (eigenfunctions[i]);
+
+  // evaluate potential
+  coefficient.reset();
+  coefficient = std::make_shared<Table<2, VectorizedArray<NumberType>>>();
+  {
+    FEEvaluation<dim,fe_degree,n_q_points,1,NumberType> fe_eval(*fine_level_data);
+    const unsigned int n_cells = fine_level_data->n_macro_cells();
+    const unsigned int nqp = fe_eval.n_q_points;
+    coefficient->reinit(n_cells, nqp);
+    for (unsigned int cell=0; cell<n_cells; ++cell)
+      {
+        fe_eval.reinit(cell);
+        for (unsigned int q=0; q<nqp; ++q)
+          {
+            VectorizedArray<NumberType> val = make_vectorized_array<NumberType> (0.);
+            Point<dim> p;
+            for (unsigned int v = 0; v < VectorizedArray<NumberType>::n_array_elements; ++v)
+              {
+                for (unsigned int d = 0; d < dim; ++d)
+                  p[d] = fe_eval.quadrature_point(q)[d][v];
+                val[v] = potential.value(p);
+              }
+            (*coefficient)(cell,q) = val;
+          }
+      }
+  }
+
+  hamiltonian_operator.set_coefficient(coefficient);
 
   // print out some data
   pcout << "Number of active cells:       "
@@ -327,8 +370,16 @@ int main (int argc, char *argv[])
                     ExcMessage("Parameter file is required as an input argument"));
         const std::string filename = argv[1];
         EigenvalueParameters parameters(filename);
-        EigenvalueProblem<2> eigen_problem(parameters);
-        eigen_problem.run();
+        if (parameters.dim == 2)
+          {
+            EigenvalueProblem<2> eigen_problem(parameters);
+            eigen_problem.run();
+          }
+        else
+          {
+            EigenvalueProblem<3> eigen_problem(parameters);
+            eigen_problem.run();
+          }
       }
 
     }

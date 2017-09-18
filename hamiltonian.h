@@ -185,25 +185,18 @@ do_operation_on_cell(FEEvaluation<dim,fe_degree,n_q_points_1d,n_components,typen
                      const unsigned int cell) const
 {
   typedef typename Base<dim,VectorType>::value_type number;
-  VectorizedArray<number> c = make_vectorized_array<number>(1.);
-  if (scalar_coefficient.get())
-    {
-      phi.evaluate (true,true,false);
-      for (unsigned int q=0; q<phi.n_q_points; ++q)
-        {
-          phi.submit_value ((*scalar_coefficient)(cell,q)*phi.get_value(q), q);
-          phi.submit_gradient (c*phi.get_gradient(q)*0.5, q);
-        }
-      phi.integrate (true,true);
-    }
-  else
-    {
-      phi.evaluate (false,true,false);
-      for (unsigned int q=0; q<phi.n_q_points; ++q)
-        phi.submit_gradient (c*phi.get_gradient(q), q);
+  // FIXME: switch to 1/2
+  VectorizedArray<number> half = make_vectorized_array<number>(0.5);
+  Assert (scalar_coefficient.get(),
+          ExcMessage("Coefficients are not initialized"));
 
-      phi.integrate (false,true);
+  phi.evaluate (true,true,false);
+  for (unsigned int q=0; q<phi.n_q_points; ++q)
+    {
+      phi.submit_value ((*scalar_coefficient)(cell,q)*phi.get_value(q), q);
+      phi.submit_gradient (half*phi.get_gradient(q), q);
     }
+  phi.integrate (true,true);
 }
 
 

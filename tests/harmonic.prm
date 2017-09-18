@@ -1,0 +1,7 @@
+# Listing of Parameters
+# ---------------------
+set Potential                            = (x*x+y*y+z*z)/2.
+set Global mesh refinement steps         = 3
+set Dimension                            = 3
+set Number of eigenvalues/eigenfunctions = 1
+set Size                                 = 20
