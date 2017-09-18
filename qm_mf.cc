@@ -10,10 +10,12 @@
  */
 
 #include <deal.II/base/conditional_ostream.h>
-#include <deal.II/base/utilities.h>
-#include <deal.II/base/multithread_info.h>
+#include <deal.II/base/function_parser.h>
 #include <deal.II/base/index_set.h>
+#include <deal.II/base/multithread_info.h>
+#include <deal.II/base/parameter_handler.h>
 #include <deal.II/base/timer.h>
+#include <deal.II/base/utilities.h>
 #include <deal.II/distributed/tria.h>
 #include <deal.II/dofs/dof_renumbering.h>
 #include <deal.II/dofs/dof_tools.h>
@@ -46,15 +48,33 @@ using namespace MatrixFreeOperators;
 struct EigenvalueParameters
 {
 
-  EigenvalueParameters()
-    :
-    global_mesh_refinement_steps(5),
-    number_of_eigenvalues(5)
-  {}
+  EigenvalueParameters(const std::string parameter_file)
+  {
+    ParameterHandler parameter_handler;
+    parameter_handler.declare_entry ("Global mesh refinement steps", "5",
+                                     Patterns::Integer (0, 20),
+                                     "The number of times the 1-cell coarse mesh should "
+                                     "be refined globally for our computations.");
+    parameter_handler.declare_entry ("Number of eigenvalues/eigenfunctions", "5",
+                                     Patterns::Integer (1, 100),
+                                     "The number of eigenvalues/eigenfunctions "
+                                     "to be computed.");
+    parameter_handler.declare_entry ("Potential", "0",
+                                     Patterns::Anything(),
+                                     "A functional description of the potential.");
+
+    parameter_handler.parse_input (parameter_file);
+
+    global_mesh_refinement_steps = parameter_handler.get_integer ("Global mesh refinement steps");
+    number_of_eigenvalues = parameter_handler.get_integer ("Number of eigenvalues/eigenfunctions");
+    potential = parameter_handler.get ("Potential");
+  }
 
   unsigned int global_mesh_refinement_steps;
 
   unsigned int number_of_eigenvalues;
+
+  std::string potential;
 
 };
 
@@ -100,6 +120,8 @@ private:
 
   HamiltonianOperator<dim,fe_degree,n_q_points,1,VectorType> hamiltonian_operator;
   MassOperator       <dim,fe_degree,n_q_points,1,VectorType> mass_operator;
+
+  FunctionParser<dim> potential;
 };
 
 
@@ -139,6 +161,10 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::EigenvalueProblem(const 
   eigenfunctions(parameters.number_of_eigenvalues),
   eigenvalues(parameters.number_of_eigenvalues)
 {
+  potential.initialize (FunctionParser<dim>::default_variable_names (),
+                        parameters.potential,
+                        typename FunctionParser<dim>::ConstMap());
+
   if (this_mpi_process==0)
     output_fstream.open("output",std::ios::out | std::ios::trunc);
 
@@ -290,15 +316,17 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
 }
 
 
-
-int main (int argc,char **argv)
+int main (int argc, char *argv[])
 {
 
   try
     {
       Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, numbers::invalid_unsigned_int);
       {
-        EigenvalueParameters parameters;
+        AssertThrow(argc > 1,
+                    ExcMessage("Parameter file is required as an input argument"));
+        const std::string filename = argv[1];
+        EigenvalueParameters parameters(filename);
         EigenvalueProblem<2> eigen_problem(parameters);
         eigen_problem.run();
       }
