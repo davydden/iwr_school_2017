@@ -47,9 +47,9 @@ struct EigenvalueParameters
 {
 
   EigenvalueParameters()
-  :
-  global_mesh_refinement_steps(5),
-  number_of_eigenvalues(5)
+    :
+    global_mesh_refinement_steps(5),
+    number_of_eigenvalues(5)
   {}
 
   unsigned int global_mesh_refinement_steps;
@@ -63,7 +63,7 @@ class EigenvalueProblem
 {
 public:
   ~EigenvalueProblem();
-  EigenvalueProblem(const EigenvalueParameters& parameters);
+  EigenvalueProblem(const EigenvalueParameters &parameters);
   void run();
 
 private:
@@ -116,28 +116,28 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::~EigenvalueProblem()
 
 
 template <int dim, int fe_degree, int n_q_points,typename NumberType>
-EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::EigenvalueProblem(const EigenvalueParameters& parameters)
-:
-parameters(parameters),
-mpi_communicator(MPI_COMM_WORLD),
-n_mpi_processes(Utilities::MPI::n_mpi_processes(mpi_communicator)),
-this_mpi_process(Utilities::MPI::this_mpi_process(mpi_communicator)),
-pcout(std::cout, this_mpi_process==0),
-plog(output_fstream, this_mpi_process==0),
-computing_timer(mpi_communicator,
-                pcout,
-                TimerOutput::summary,
-                TimerOutput::wall_times),
-triangulation(mpi_communicator,
-              // guarantee that the mesh also does not change by more than refinement level across vertices that might connect two cells:
-              Triangulation<dim>::limit_level_difference_at_vertices,
-              parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
-dof_handler(triangulation),
-fe(fe_degree),
-mapping(fe_degree+1),
-quadrature_formula(n_q_points),
-eigenfunctions(parameters.number_of_eigenvalues),
-eigenvalues(parameters.number_of_eigenvalues)
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::EigenvalueProblem(const EigenvalueParameters &parameters)
+  :
+  parameters(parameters),
+  mpi_communicator(MPI_COMM_WORLD),
+  n_mpi_processes(Utilities::MPI::n_mpi_processes(mpi_communicator)),
+  this_mpi_process(Utilities::MPI::this_mpi_process(mpi_communicator)),
+  pcout(std::cout, this_mpi_process==0),
+  plog(output_fstream, this_mpi_process==0),
+  computing_timer(mpi_communicator,
+                  pcout,
+                  TimerOutput::summary,
+                  TimerOutput::wall_times),
+  triangulation(mpi_communicator,
+                // guarantee that the mesh also does not change by more than refinement level across vertices that might connect two cells:
+                Triangulation<dim>::limit_level_difference_at_vertices,
+                parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
+  dof_handler(triangulation),
+  fe(fe_degree),
+  mapping(fe_degree+1),
+  quadrature_formula(n_q_points),
+  eigenfunctions(parameters.number_of_eigenvalues),
+  eigenvalues(parameters.number_of_eigenvalues)
 {
   if (this_mpi_process==0)
     output_fstream.open("output",std::ios::out | std::ios::trunc);
@@ -145,11 +145,11 @@ eigenvalues(parameters.number_of_eigenvalues)
   const int n_threads = dealii::MultithreadInfo::n_threads();
   pcout << "-------------------------------------------------------------------------" << std::endl
 #ifdef DEBUG
-         << "--     . running in DEBUG mode" << std::endl
+        << "--     . running in DEBUG mode" << std::endl
 #else
-         << "--     . running in OPTIMIZED mode" << std::endl
+        << "--     . running in OPTIMIZED mode" << std::endl
 #endif
-         << "--     . running with " << n_mpi_processes << " MPI process" << (n_mpi_processes == 1 ? "" : "es") << std::endl;
+        << "--     . running with " << n_mpi_processes << " MPI process" << (n_mpi_processes == 1 ? "" : "es") << std::endl;
 
   if (n_threads>1)
     pcout << "--     . using " << n_threads << " threads " << (n_mpi_processes == 1 ? "" : "each") << std::endl;
