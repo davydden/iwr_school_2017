@@ -68,6 +68,9 @@ struct EigenvalueParameters
     parameter_handler.declare_entry ("Size", "2.",
                                      Patterns::Double(),
                                      "Size of the computational domain");
+    parameter_handler.declare_entry ("Shift", "0.",
+                                     Patterns::Double(),
+                                     "Value of shift in shift-and-invert transformation");
 
 
     parameter_handler.parse_input (parameter_file);
@@ -77,6 +80,7 @@ struct EigenvalueParameters
     potential = parameter_handler.get ("Potential");
     dim = parameter_handler.get_integer ("Dimension");
     size = parameter_handler.get_double ("Size");
+    shift = parameter_handler.get_double("Shift");
   }
 
   unsigned int global_mesh_refinement_steps;
@@ -88,6 +92,8 @@ struct EigenvalueParameters
   unsigned int dim;
 
   double size;
+
+  double shift;
 
 };
 
@@ -268,7 +274,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
               {
                 for (unsigned int d = 0; d < dim; ++d)
                   p[d] = fe_eval.quadrature_point(q)[d][v];
-                val[v] = potential.value(p);
+                val[v] = potential.value(p) - parameters.shift;
               }
             (*coefficient)(cell,q) = val;
           }
@@ -313,6 +319,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve()
 
   SolverControl solver_control(dof_handler.n_dofs(), 1e-9, /*log_history*/ false, /*log_results*/ false);
   PArpackSolver<VectorType> eigensolver(solver_control, mpi_communicator, additional_data);
+  eigensolver.set_shift(parameters.shift);
 
   eigensolver.reinit(eigenfunctions[0]);
   // make sure initial vector is orthogonal to the space due to constraints
