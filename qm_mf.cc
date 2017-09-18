@@ -11,6 +11,7 @@
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/utilities.h>
+#include <deal.II/base/multithread_info.h>
 #include <deal.II/base/index_set.h>
 #include <deal.II/base/timer.h>
 #include <deal.II/distributed/tria.h>
@@ -136,6 +137,23 @@ eigenvalues(parameters.number_of_eigenvalues)
 {
   if (this_mpi_process==0)
     output_fstream.open("output",std::ios::out | std::ios::trunc);
+
+  const int n_threads = dealii::MultithreadInfo::n_threads();
+  pcout << "-------------------------------------------------------------------------" << std::endl
+#ifdef DEBUG
+         << "--     . running in DEBUG mode" << std::endl
+#else
+         << "--     . running in OPTIMIZED mode" << std::endl
+#endif
+         << "--     . running with " << n_mpi_processes << " MPI process" << (n_mpi_processes == 1 ? "" : "es") << std::endl;
+
+  if (n_threads>1)
+    pcout << "--     . using " << n_threads << " threads " << (n_mpi_processes == 1 ? "" : "each") << std::endl;
+
+  pcout  << "--     . polynomial degree " << fe_degree << std::endl
+         << "--     . quadrature order "  << n_q_points << std::endl
+         << "-------------------------------------------------------------------------" << std::endl
+         << std::endl;
 }
 
 
@@ -144,6 +162,7 @@ template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::make_mesh()
 {
+  TimerOutput::Scope t (computing_timer, "Make mesh");
   GridGenerator::hyper_cube (triangulation, -1, 1);
   triangulation.refine_global (parameters.global_mesh_refinement_steps);
 }
@@ -154,6 +173,7 @@ template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
 {
+  TimerOutput::Scope t (computing_timer, "Setup");
   dof_handler.distribute_dofs (fe);
 
   IndexSet locally_relevant_dofs;
@@ -184,7 +204,13 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
   for (unsigned int i=0; i<eigenfunctions.size (); ++i)
     fine_level_data->initialize_dof_vector (eigenfunctions[i]);
 
-
+  // print out some data
+  pcout << "Number of active cells:       "
+        << triangulation.n_global_active_cells()
+        << std::endl
+        << "Number of degrees of freedom: "
+        << dof_handler.n_dofs()
+        << std::endl;
 }
 
 
@@ -193,6 +219,7 @@ template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve()
 {
+  TimerOutput::Scope t (computing_timer, "Solve");
   std::vector<std::complex<NumberType>> lambda(parameters.number_of_eigenvalues);
 
   // set up iterative inverse
@@ -237,11 +264,14 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve()
   for (unsigned int i = 0; i < lambda.size(); i++)
     eigenvalues[i] = lambda[i].real();
 
-  for (unsigned int i=0; i < eigenvalues.size(); i++)
-    {
-      pcout << eigenvalues[i] << std::endl;
-      plog  << eigenvalues[i] << std::endl;
-    }
+  pcout << "Eigenvalues:                  ";
+  for (const auto ev : eigenvalues)
+    pcout << ev << " ";
+  pcout << std::endl;
+
+  // log for tests
+  for (const auto ev: eigenvalues)
+    plog  << ev << std::endl;
 }
 
 
