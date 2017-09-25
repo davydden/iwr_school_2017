@@ -29,6 +29,7 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/numerics/data_out.h>
+#include <deal.II/numerics/error_estimator.h>
 
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/grid/grid_in.h>
@@ -113,6 +114,7 @@ private:
   void setup_system();
   void solve();
   void adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &eigenfunctions) const;
+  void estimate_error(Vector<float> &error) const;
   void output(const unsigned int iteration) const;
 
   const EigenvalueParameters &parameters;
@@ -145,6 +147,8 @@ private:
   FunctionParser<dim> potential;
 
   std::shared_ptr<Table<2, VectorizedArray<NumberType>>> coefficient;
+
+  Vector<float> estimated_error_per_cell;
 };
 
 
@@ -228,6 +232,9 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
 {
   TimerOutput::Scope t (computing_timer, "Setup");
   dof_handler.distribute_dofs (fe);
+
+  estimated_error_per_cell.reinit(triangulation.n_active_cells());
+  estimated_error_per_cell =0.;
 
   DoFTools::extract_locally_relevant_dofs (dof_handler,
                                            locally_relevant_dofs);
@@ -385,6 +392,51 @@ adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &
 template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
+estimate_error(Vector<float> &error) const
+{
+  std::vector<Vector<float>> errors_per_cell(eigenfunctions.size());
+
+  std::vector<Vector<float>*> err(eigenfunctions.size());
+  std::vector<const LinearAlgebra::distributed::Vector<NumberType> *> sol(eigenfunctions.size());
+  for (unsigned int i = 0; i < eigenfunctions.size(); i++)
+    {
+      errors_per_cell[i].reinit(triangulation.n_active_cells());
+      sol[i] = &eigenfunctions[i];
+      err[i] = &errors_per_cell[i];
+    }
+
+  KellyErrorEstimator<dim>::estimate (dof_handler,
+                                      QGauss<dim-1>(fe_degree+1),
+                                      /*neumann_bc:*/typename FunctionMap<dim>::type(),
+                                      sol,
+                                      err,
+                                      ComponentMask(),
+                                      0,
+                                      numbers::invalid_unsigned_int,
+                                      numbers::invalid_subdomain_id,
+                                      numbers::invalid_material_id,
+                                      KellyErrorEstimator<dim>::cell_diameter);
+
+  // Note, that Kelly return error (not squared error)
+  for (unsigned int c = 0; c < triangulation.n_active_cells(); c++)
+    {
+      error[c] = 0.;
+      for (unsigned int i = 0; i < eigenfunctions.size(); i++)
+        error[c] += Utilities::fixed_power<2>(errors_per_cell[i][c]);
+      error[c] = std::sqrt(estimated_error_per_cell[c]);
+    }
+
+  double l2_squared = Utilities::fixed_power<2>(estimated_error_per_cell.l2_norm());
+  l2_squared = Utilities::MPI::sum(l2_squared, mpi_communicator);
+  l2_squared=std::sqrt(l2_squared);
+  pcout << "L2 norm of the error " << l2_squared << std::endl;
+}
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
 output (const unsigned int cycle) const
 {
   pcout << "   " << "Output solution..." << std::flush;
@@ -401,7 +453,7 @@ output (const unsigned int cycle) const
   for (unsigned int i=0; i<subdomain.size(); ++i)
     subdomain(i) = triangulation.locally_owned_subdomain();
   data_out.add_data_vector (subdomain, "subdomain");
-  // data_out.add_data_vector (estimated_error_per_cell, "error_indicator");
+  data_out.add_data_vector (estimated_error_per_cell, "error_indicator");
   data_out.build_patches ();
 
   const std::string prefix = "output_" + Utilities::int_to_string(cycle);
@@ -448,6 +500,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
   solve();
   adjust_ghost_range(eigenfunctions);
   output(0);
+  estimate_error(estimated_error_per_cell);
 }
 
 
