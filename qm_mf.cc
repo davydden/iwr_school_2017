@@ -28,6 +28,7 @@
 #include <deal.II/lac/linear_operator.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/numerics/vector_tools.h>
+#include <deal.II/numerics/data_out.h>
 
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/grid/grid_in.h>
@@ -111,6 +112,8 @@ private:
   void make_mesh();
   void setup_system();
   void solve();
+  void adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &eigenfunctions) const;
+  void output(const unsigned int iteration) const;
 
   const EigenvalueParameters &parameters;
 
@@ -129,7 +132,6 @@ private:
   QGauss<1> quadrature_formula;
 
   ConstraintMatrix constraints;
-  IndexSet locally_owned_dofs;
   IndexSet locally_relevant_dofs;
 
   std::vector<LinearAlgebra::distributed::Vector<NumberType>> eigenfunctions;
@@ -227,7 +229,6 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
   TimerOutput::Scope t (computing_timer, "Setup");
   dof_handler.distribute_dofs (fe);
 
-  IndexSet locally_relevant_dofs;
   DoFTools::extract_locally_relevant_dofs (dof_handler,
                                            locally_relevant_dofs);
 
@@ -358,11 +359,95 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve()
 
 template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
+adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &eigenfunctions) const
+{
+  // LA::distributed::Vector initialized by MatrixFree won't have
+  // all the ghost values needed for Kelly estimator. So we need to
+  // expand the set of ghost dofs here.
+  for (unsigned int i = 0; i < eigenfunctions.size(); i++)
+    {
+      // follow implementation of MatrixFreeOperators::Base::adjust_ghost_range_if_necessary()
+      VectorView<double> view_src_in(eigenfunctions[i].local_size(), eigenfunctions[i].begin());
+      Vector<double> copy_vec = view_src_in;
+      eigenfunctions[i].reinit(dof_handler.locally_owned_dofs(),
+                               locally_relevant_dofs,
+                               mpi_communicator);
+      VectorView<double> view_src_out(eigenfunctions[i].local_size(), eigenfunctions[i].begin());
+      static_cast<Vector<double>&>(view_src_out) = copy_vec;
+      constraints.distribute (eigenfunctions[i]);
+      eigenfunctions[i].update_ghost_values();
+    }
+}
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
+output (const unsigned int cycle) const
+{
+  pcout << "   " << "Output solution..." << std::flush;
+
+  DataOut<dim> data_out;
+
+  data_out.attach_dof_handler (dof_handler);
+  for (unsigned int i = 0; i < eigenfunctions.size(); i++)
+    data_out.add_data_vector (eigenfunctions[i],
+                              std::string("eigenfunction_") +
+                              dealii::Utilities::int_to_string(i));
+
+  Vector<float> subdomain (triangulation.n_active_cells());
+  for (unsigned int i=0; i<subdomain.size(); ++i)
+    subdomain(i) = triangulation.locally_owned_subdomain();
+  data_out.add_data_vector (subdomain, "subdomain");
+  // data_out.add_data_vector (estimated_error_per_cell, "error_indicator");
+  data_out.build_patches ();
+
+  const std::string prefix = "output_" + Utilities::int_to_string(cycle);
+
+  const auto get_filename = [&](const unsigned int p) -> std::string
+  {
+    return prefix + ".proc" + Utilities::int_to_string(p) + ".vtu";
+  };
+
+  const std::string filename = get_filename(triangulation.locally_owned_subdomain());
+
+  std::ofstream output (filename.c_str());
+  data_out.write_vtu (output);
+
+  if (dealii::Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+    {
+      // first write out "pvtu" file which combines output from all MPI cores
+      std::vector<std::string> filenames;
+      for (unsigned int i=0; i<dealii::Utilities::MPI::n_mpi_processes(mpi_communicator); ++i)
+        filenames.push_back (get_filename(i));
+
+      const std::string pvtu_filename = prefix + ".pvtu";
+      std::ofstream pvtu_output (pvtu_filename.c_str());
+      data_out.write_pvtu_record (pvtu_output, filenames);
+
+      // and then write a "pvd" file which combines the output of different cycles
+      static std::vector<std::pair<double,std::string> > time_and_name_history;
+      time_and_name_history.push_back (std::make_pair (cycle,pvtu_filename));
+
+      const std::string pvd_filename = "output.pvd";
+      std::ofstream pvd_output (pvd_filename.c_str());
+      DataOutBase::write_pvd_record (pvd_output, time_and_name_history);
+    }
+}
+
+
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
 {
   make_mesh();
   setup_system();
   solve();
+  adjust_ghost_range(eigenfunctions);
+  output(0);
 }
 
 
