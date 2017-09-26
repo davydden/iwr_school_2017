@@ -125,7 +125,7 @@ private:
 
   void make_mesh();
   void setup_system();
-  void solve();
+  void solve(const unsigned int cycle);
   void adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &eigenfunctions) const;
   void estimate_error(Vector<float> &error) const;
   void refine();
@@ -318,7 +318,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
 
 template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
-EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve()
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve(const unsigned int cycle)
 {
   TimerOutput::Scope t (computing_timer, "Solve");
   std::vector<std::complex<NumberType>> lambda(parameters.number_of_eigenvalues);
@@ -372,8 +372,14 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve()
   pcout << std::endl;
 
   // log for tests
+  if (cycle==0)
+    plog << "# cycle cells dofs eigenvalues" << std::endl;
+  plog << cycle << " "
+       << triangulation.n_global_active_cells() << " "
+       << dof_handler.n_dofs();
   for (const auto ev: eigenvalues)
-    plog  << ev << std::endl;
+    plog << " " << ev;
+  plog << std::endl;
 }
 
 
@@ -534,7 +540,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
   for (unsigned int cycle = 0; cycle <= parameters.adaptive_mesh_refinement_steps; ++cycle)
     {
       setup_system();
-      solve();
+      solve(cycle);
       adjust_ghost_range(eigenfunctions);
       output(cycle);
       estimate_error(estimated_error_per_cell);
