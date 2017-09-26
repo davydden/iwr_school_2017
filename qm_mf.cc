@@ -71,6 +71,12 @@ struct EigenvalueParameters
     parameter_handler.declare_entry ("Dimension", "2",
                                      Patterns::Selection("2|3"),
                                      "Space dimension of the problem.");
+    parameter_handler.declare_entry ("Degree", "1",
+                                     Patterns::Integer (1,4),
+                                     "Polynomial degree of the FE basis.");
+    parameter_handler.declare_entry ("Quadrature points", "2",
+                                     Patterns::Integer (1),
+                                     "Number of quadrature points in each dimension.");
     parameter_handler.declare_entry ("Size", "2.",
                                      Patterns::Double(),
                                      "Size of the computational domain");
@@ -89,6 +95,8 @@ struct EigenvalueParameters
     number_of_eigenvalues = parameter_handler.get_integer ("Number of eigenvalues/eigenfunctions");
     potential = parameter_handler.get ("Potential");
     dim = parameter_handler.get_integer ("Dimension");
+    degree = parameter_handler.get_integer ("Degree");
+    n_q_points = parameter_handler.get_integer ("Quadrature points");
     size = parameter_handler.get_double ("Size");
     shift = parameter_handler.get_double("Shift");
     refinement = parameter_handler.get_double("Refinement parameter");
@@ -103,6 +111,10 @@ struct EigenvalueParameters
   std::string potential;
 
   unsigned int dim;
+
+  unsigned int degree;
+
+  unsigned int n_q_points;
 
   double size;
 
@@ -549,6 +561,40 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
 }
 
 
+// macros for Boost to choose polynomial degree and quadrature points
+// at run-time:
+# include <boost/preprocessor/facilities/empty.hpp>
+# include <boost/preprocessor/list/at.hpp>
+# include <boost/preprocessor/list/for_each_product.hpp>
+# include <boost/preprocessor/tuple/elem.hpp>
+# include <boost/preprocessor/tuple/to_list.hpp>
+
+#define MF_DIM BOOST_PP_TUPLE_TO_LIST(2,(2,3))
+#define MF_DQ  BOOST_PP_TUPLE_TO_LIST(10,(\
+                                          (1,2),\
+                                          (2,3),(2,4),(2,5),(2,6),\
+                                          (3,4),(3,5),(3,6),\
+                                          (4,5),(4,6) \
+                                         ))
+
+// Accessors:
+#define GET_D(L)   BOOST_PP_TUPLE_ELEM(2,0,BOOST_PP_TUPLE_ELEM(1,0,L))
+#define GET_Q(L)   BOOST_PP_TUPLE_ELEM(2,1,BOOST_PP_TUPLE_ELEM(1,0,L))
+
+#define DOIF3(R, L) \
+  else if ( (parameters.degree == GET_D(L)) && (parameters.n_q_points == GET_Q(L) ) ) \
+    { \
+      EigenvalueProblem<3,GET_D(L),GET_Q(L)> eigen_problem(parameters); \
+      eigen_problem.run (); \
+    } \
+   
+#define DOIF2(R, L) \
+  else if ( (parameters.degree == GET_D(L)) && (parameters.n_q_points == GET_Q(L) ) ) \
+    { \
+      EigenvalueProblem<2,GET_D(L),GET_Q(L)> eigen_problem(parameters); \
+      eigen_problem.run (); \
+    } \
+   
 int main (int argc, char *argv[])
 {
 
@@ -562,13 +608,39 @@ int main (int argc, char *argv[])
         EigenvalueParameters parameters(filename);
         if (parameters.dim == 2)
           {
-            EigenvalueProblem<2> eigen_problem(parameters);
-            eigen_problem.run();
+            // start with a dummy condition to use Boost PP 'else if' below.
+            if (parameters.degree==0)
+              {
+                AssertThrow(false, ExcInternalError());
+              }
+            BOOST_PP_LIST_FOR_EACH_PRODUCT(DOIF2, 1, (MF_DQ))
+            else
+              {
+                AssertThrow(false,
+                            ExcMessage("Matrix-free calculations with degree="+
+                                       std::to_string(parameters.degree)+
+                                       " and n_q_points_1d="+
+                                       std::to_string(parameters.n_q_points)+
+                                       " are not supported."));
+              }
           }
         else
           {
-            EigenvalueProblem<3> eigen_problem(parameters);
-            eigen_problem.run();
+            // start with a dummy condition to use Boost PP 'else if' below.
+            if (parameters.degree==0)
+              {
+                AssertThrow(false, ExcInternalError());
+              }
+            BOOST_PP_LIST_FOR_EACH_PRODUCT(DOIF3, 1, (MF_DQ))
+            else
+              {
+                AssertThrow(false,
+                            ExcMessage("Matrix-free calculations with degree="+
+                                       std::to_string(parameters.degree)+
+                                       " and n_q_points_1d="+
+                                       std::to_string(parameters.n_q_points)+
+                                       " are not supported."));
+              }
           }
       }
 
