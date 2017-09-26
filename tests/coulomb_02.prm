@@ -1,0 +1,10 @@
+# Listing of Parameters
+# ---------------------
+set Global mesh refinement steps         = 3
+set Size                                 = 40
+set Potential                            = -1./sqrt(x*x+y*y+z*z)
+set Dimension                            = 3
+set Shift                                = -0.51
+set Number of eigenvalues/eigenfunctions = 1
+set Adaptive mesh refinement steps       = 10
+set Degree                               = 2

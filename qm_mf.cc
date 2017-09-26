@@ -74,8 +74,8 @@ struct EigenvalueParameters
     parameter_handler.declare_entry ("Degree", "1",
                                      Patterns::Integer (1,4),
                                      "Polynomial degree of the FE basis.");
-    parameter_handler.declare_entry ("Quadrature points", "2",
-                                     Patterns::Integer (1),
+    parameter_handler.declare_entry ("Quadrature points", "0",
+                                     Patterns::Integer (0),
                                      "Number of quadrature points in each dimension.");
     parameter_handler.declare_entry ("Size", "2.",
                                      Patterns::Double(),
@@ -96,7 +96,8 @@ struct EigenvalueParameters
     potential = parameter_handler.get ("Potential");
     dim = parameter_handler.get_integer ("Dimension");
     degree = parameter_handler.get_integer ("Degree");
-    n_q_points = parameter_handler.get_integer ("Quadrature points");
+    const unsigned int qp = parameter_handler.get_integer ("Quadrature points");
+    n_q_points = (qp == 0 ? degree + 1 : qp);
     size = parameter_handler.get_double ("Size");
     shift = parameter_handler.get_double("Shift");
     refinement = parameter_handler.get_double("Refinement parameter");
