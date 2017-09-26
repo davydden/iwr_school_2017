@@ -24,6 +24,7 @@
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/fe_tools.h>
 #include <deal.II/grid/grid_generator.h>
+#include <deal.II/grid/grid_refinement.h>
 #include <deal.II/matrix_free/operators.h>
 #include <deal.II/lac/linear_operator.h>
 #include <deal.II/lac/precondition.h>
@@ -73,7 +74,9 @@ struct EigenvalueParameters
     parameter_handler.declare_entry ("Shift", "0.",
                                      Patterns::Double(),
                                      "Value of shift in shift-and-invert transformation");
-
+    parameter_handler.declare_entry ("Refinement parameter", "0.5",
+                                     Patterns::Double(),
+                                     "A parameter to mark cells for refinement");
 
     parameter_handler.parse_input (parameter_file);
 
@@ -83,6 +86,7 @@ struct EigenvalueParameters
     dim = parameter_handler.get_integer ("Dimension");
     size = parameter_handler.get_double ("Size");
     shift = parameter_handler.get_double("Shift");
+    refinement = parameter_handler.get_double("Refinement parameter");
   }
 
   unsigned int global_mesh_refinement_steps;
@@ -96,6 +100,8 @@ struct EigenvalueParameters
   double size;
 
   double shift;
+
+  double refinement;
 
 };
 
@@ -115,6 +121,7 @@ private:
   void solve();
   void adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &eigenfunctions) const;
   void estimate_error(Vector<float> &error) const;
+  void refine();
   void output(const unsigned int iteration) const;
 
   const EigenvalueParameters &parameters;
@@ -437,6 +444,26 @@ estimate_error(Vector<float> &error) const
 template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
+refine()
+{
+  const double threshold = parameters.refinement * Utilities::MPI::max(estimated_error_per_cell.linfty_norm(),mpi_communicator);
+  GridRefinement::refine (triangulation, estimated_error_per_cell, threshold);
+
+  for (typename Triangulation<dim>::active_cell_iterator
+       cell = triangulation.begin_active();
+       cell != triangulation.end(); ++cell)
+    if (cell->subdomain_id() != triangulation.locally_owned_subdomain())
+      {
+        cell->clear_refine_flag ();
+        cell->clear_coarsen_flag ();
+      }
+
+  triangulation.execute_coarsening_and_refinement();
+}
+
+template <int dim, int fe_degree, int n_q_points,typename NumberType>
+void
+EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
 output (const unsigned int cycle) const
 {
   pcout << "   " << "Output solution..." << std::flush;
@@ -501,6 +528,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
   adjust_ghost_range(eigenfunctions);
   output(0);
   estimate_error(estimated_error_per_cell);
+  refine();
 }
 
 
