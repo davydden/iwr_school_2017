@@ -319,10 +319,10 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::setup_system()
   hamiltonian_operator.set_coefficient(coefficient);
 
   // print out some data
-  pcout << "Number of active cells:       "
+  pcout << "   Number of active cells:       "
         << triangulation.n_global_active_cells()
         << std::endl
-        << "Number of degrees of freedom: "
+        << "   Number of degrees of freedom: "
         << dof_handler.n_dofs()
         << std::endl;
 }
@@ -379,7 +379,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::solve(const unsigned int
   for (unsigned int i = 0; i < lambda.size(); i++)
     eigenvalues[i] = lambda[i].real();
 
-  pcout << "Eigenvalues:                  ";
+  pcout << "   Eigenvalues:                  ";
   for (const auto ev : eigenvalues)
     pcout << ev << " ";
   pcout << std::endl;
@@ -462,7 +462,7 @@ estimate_error(Vector<float> &error) const
   double l2_squared = Utilities::fixed_power<2>(estimated_error_per_cell.l2_norm());
   l2_squared = Utilities::MPI::sum(l2_squared, mpi_communicator);
   l2_squared=std::sqrt(l2_squared);
-  pcout << "L2 norm of the error " << l2_squared << std::endl;
+  pcout << "   L2 norm of the error:         " << l2_squared << std::endl;
 }
 
 
@@ -492,7 +492,7 @@ void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
 output (const unsigned int cycle) const
 {
-  pcout << "   " << "Output solution..." << std::flush;
+  pcout << "   Output solution" << std::endl;
 
   DataOut<dim> data_out;
 
@@ -552,12 +552,14 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
 
   for (unsigned int cycle = 0; cycle <= parameters.adaptive_mesh_refinement_steps; ++cycle)
     {
+      pcout << "Cycle " << cycle << std::endl;
       setup_system();
       solve(cycle);
       adjust_ghost_range(eigenfunctions);
       output(cycle);
       estimate_error(estimated_error_per_cell);
       refine();
+      pcout << std::endl;
     }
 }
 
