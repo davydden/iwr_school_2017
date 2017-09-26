@@ -58,6 +58,9 @@ struct EigenvalueParameters
                                      Patterns::Integer (0, 20),
                                      "The number of times the 1-cell coarse mesh should "
                                      "be refined globally for our computations.");
+    parameter_handler.declare_entry ("Adaptive mesh refinement steps", "0",
+                                     Patterns::Integer (0, 20),
+                                     "The number of times to perform adaptive mesh refinement.");
     parameter_handler.declare_entry ("Number of eigenvalues/eigenfunctions", "5",
                                      Patterns::Integer (1, 100),
                                      "The number of eigenvalues/eigenfunctions "
@@ -78,9 +81,11 @@ struct EigenvalueParameters
                                      Patterns::Double(),
                                      "A parameter to mark cells for refinement");
 
+
     parameter_handler.parse_input (parameter_file);
 
     global_mesh_refinement_steps = parameter_handler.get_integer ("Global mesh refinement steps");
+    adaptive_mesh_refinement_steps = parameter_handler.get_integer ("Adaptive mesh refinement steps");
     number_of_eigenvalues = parameter_handler.get_integer ("Number of eigenvalues/eigenfunctions");
     potential = parameter_handler.get ("Potential");
     dim = parameter_handler.get_integer ("Dimension");
@@ -90,6 +95,8 @@ struct EigenvalueParameters
   }
 
   unsigned int global_mesh_refinement_steps;
+
+  unsigned int adaptive_mesh_refinement_steps;
 
   unsigned int number_of_eigenvalues;
 
@@ -523,12 +530,16 @@ void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
 {
   make_mesh();
-  setup_system();
-  solve();
-  adjust_ghost_range(eigenfunctions);
-  output(0);
-  estimate_error(estimated_error_per_cell);
-  refine();
+
+  for (unsigned int cycle = 0; cycle <= parameters.adaptive_mesh_refinement_steps; ++cycle)
+    {
+      setup_system();
+      solve();
+      adjust_ghost_range(eigenfunctions);
+      output(cycle);
+      estimate_error(estimated_error_per_cell);
+      refine();
+    }
 }
 
 
