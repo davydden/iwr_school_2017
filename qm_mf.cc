@@ -140,7 +140,7 @@ private:
   void setup_system();
   void solve(const unsigned int cycle);
   void adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &eigenfunctions) const;
-  void estimate_error(Vector<float> &error) const;
+  void estimate_error();
   void refine();
   void output(const unsigned int iteration) const;
 
@@ -425,7 +425,7 @@ adjust_ghost_range(std::vector<LinearAlgebra::distributed::Vector<NumberType>> &
 template <int dim, int fe_degree, int n_q_points,typename NumberType>
 void
 EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::
-estimate_error(Vector<float> &error) const
+estimate_error()
 {
   std::vector<Vector<float>> errors_per_cell(eigenfunctions.size());
 
@@ -438,26 +438,66 @@ estimate_error(Vector<float> &error) const
       err[i] = &errors_per_cell[i];
     }
 
+  // coefficient infront of Laplace
+  const double coefficient = 1.;// FIXME: -0.5;
+  // jump across faces:
+  Functions::ConstantFunction<dim> one_half(coefficient);
   KellyErrorEstimator<dim>::estimate (dof_handler,
                                       QGauss<dim-1>(fe_degree+1),
                                       /*neumann_bc:*/typename FunctionMap<dim>::type(),
                                       sol,
                                       err,
                                       ComponentMask(),
-                                      0,
+                                      /*coeeficient*/&one_half,
                                       numbers::invalid_unsigned_int,
                                       numbers::invalid_subdomain_id,
                                       numbers::invalid_material_id,
                                       KellyErrorEstimator<dim>::cell_diameter);
 
-  // Note, that Kelly return error (not squared error)
-  for (unsigned int c = 0; c < triangulation.n_active_cells(); c++)
-    {
-      error[c] = 0.;
-      for (unsigned int i = 0; i < eigenfunctions.size(); i++)
-        error[c] += Utilities::fixed_power<2>(errors_per_cell[i][c]);
-      error[c] = std::sqrt(estimated_error_per_cell[c]);
-    }
+  // Now do the volumetric (residual) part:
+  QGauss<dim> quadrature(n_q_points);
+  FEValues<dim> fe_values (fe, quadrature,
+                           update_values | update_hessians | update_quadrature_points | update_JxW_values);
+
+  const unsigned int dofs_per_cell = fe.dofs_per_cell;
+  const unsigned int nqp    = quadrature.size();
+
+  std::vector<double> laplacians(nqp), values(nqp),
+      potential_values(nqp);
+
+  typename DoFHandler<dim>::active_cell_iterator
+  cell = dof_handler.begin_active(),
+  endc = dof_handler.end();
+  unsigned int cell_no = 0;
+  estimated_error_per_cell = 0.;
+  for (; cell!=endc; ++cell,++cell_no)
+    if (cell->is_locally_owned())
+      {
+        fe_values.reinit (cell);
+        const double factor = Utilities::fixed_power<2>(cell->diameter());
+        potential.value_list(fe_values.get_quadrature_points(), potential_values);
+
+        for (unsigned int i = 0; i < eigenfunctions.size(); i++)
+          {
+            fe_values.get_function_laplacians (eigenfunctions[i], laplacians);
+            fe_values.get_function_values     (eigenfunctions[i], values);
+
+            double integral = 0.;
+            for (unsigned int q=0; q<nqp; ++q)
+              integral +=  Utilities::fixed_power<2>(
+                             coefficient*laplacians[q] + (potential_values[q] - eigenvalues[i]) * values[q]
+                           ) * fe_values.JxW (q);
+
+            integral *= factor;
+
+            // Volumetric and jump parts.
+            // Note, that Kelly return error (not squared error)
+            // FIXME:
+            estimated_error_per_cell[cell_no] += /*integral +*/ Utilities::fixed_power<2>(errors_per_cell[i][cell_no]);
+          }
+
+        estimated_error_per_cell[cell_no] = std::sqrt(estimated_error_per_cell[cell_no]);
+      }
 
   double l2_squared = Utilities::fixed_power<2>(estimated_error_per_cell.l2_norm());
   l2_squared = Utilities::MPI::sum(l2_squared, mpi_communicator);
@@ -557,7 +597,7 @@ EigenvalueProblem<dim,fe_degree,n_q_points,NumberType>::run()
       solve(cycle);
       adjust_ghost_range(eigenfunctions);
       output(cycle);
-      estimate_error(estimated_error_per_cell);
+      estimate_error();
       refine();
       pcout << std::endl;
     }
