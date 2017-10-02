@@ -8,3 +8,4 @@ set Shift                                = -0.51
 set Number of eigenvalues/eigenfunctions = 1
 set Adaptive mesh refinement steps       = 10
 set Degree                               = 2
+set Quadrature points                    = 4

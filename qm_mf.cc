@@ -439,7 +439,7 @@ estimate_error()
     }
 
   // coefficient infront of Laplace
-  const double coefficient = 1.;// FIXME: -0.5;
+  const double coefficient = -0.5;
   // jump across faces:
   Functions::ConstantFunction<dim> one_half(coefficient);
   KellyErrorEstimator<dim>::estimate (dof_handler,
@@ -492,8 +492,7 @@ estimate_error()
 
             // Volumetric and jump parts.
             // Note, that Kelly return error (not squared error)
-            // FIXME:
-            estimated_error_per_cell[cell_no] += /*integral +*/ Utilities::fixed_power<2>(errors_per_cell[i][cell_no]);
+            estimated_error_per_cell[cell_no] += integral + Utilities::fixed_power<2>(errors_per_cell[i][cell_no]);
           }
 
         estimated_error_per_cell[cell_no] = std::sqrt(estimated_error_per_cell[cell_no]);
