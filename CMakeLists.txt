@@ -57,3 +57,10 @@ COMMENT "Switch CMAKE_BUILD_TYPE to Release"
 # Enable testing and descent into tests/ subdirectory:
 ENABLE_TESTING()
 ADD_SUBDIRECTORY(tests)
+
+# Auxiliary lightly modified step-6 tutorial program:
+ADD_EXECUTABLE("step-6"
+    step-6.cc
+  )
+
+DEAL_II_SETUP_TARGET("step-6")
