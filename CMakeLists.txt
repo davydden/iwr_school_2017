@@ -7,7 +7,7 @@ SET(TARGET_SRC
 
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8.8)
 
-FIND_PACKAGE(deal.II 8.5.0 QUIET
+FIND_PACKAGE(deal.II 9.0.0 QUIET
   HINTS ${deal.II_DIR} ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR}
   )
 IF(NOT ${deal.II_FOUND})
@@ -22,11 +22,13 @@ DEAL_II_INITIALIZE_CACHED_VARIABLES()
 DEAL_II_QUERY_GIT_INFORMATION()
 
 IF(NOT DEAL_II_WITH_P4EST OR
-   NOT DEAL_II_WITH_MPI)
+   NOT DEAL_II_WITH_MPI OR
+   NOT DEAL_II_WITH_ARPACK)
   MESSAGE(FATAL_ERROR "
 Error! The deal.II library found at ${DEAL_II_PATH} was not configured with
     DEAL_II_WITH_MPI      = ON
     DEAL_II_WITH_P4EST    = ON
+    DEAL_II_WITH_ARPACK   = ON
 One or all of these are OFF in your installation but are required."
     )
 ENDIF()
